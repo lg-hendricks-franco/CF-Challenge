@@ -1,0 +1,106 @@
+---
+title: "Lindsey's Climate Farmers Challenge"
+output: html_notebook
+---
+
+The work involves the use and analysis of gridded data (usually remote sensing or
+model products), including land cover, climate and soil. You will need to download
+and visualize relationships between these over a chosen region.
+
+Load required packages
+```{r}
+# List of packages to load
+packages_today <- c("tidyverse","ecmwfr","ggspatial","rgdal")
+
+# Load the packages
+lapply(packages_today, library, character.only = TRUE)
+
+setwd("C:/Users/linds/Dropbox/Documents (Selective Sync Conflict)/Job Applications/Climate Farmers/CF-Challenge")
+
+```
+
+
+
+_**Step 1: Region Selection**_
+
+*Decide on a specific region to work with. This region should be large enough to
+include various land use types but small enough to keep computation times
+reasonable. A country or region within a country for example.
+The region can be defined using simple longitude and latitude limits or using a
+geospatial file (e.g. shape file or geojson). Use this region to filter downloaded data
+in the next steps.*
+
+
+First, I load the required packages for this step (sf and rnaturalearth) to access shape files of country and regional boundaries. I will work with the state of California, USA.
+```{r}
+# Load the packages
+
+lapply(c("sf","rnaturalearth"), library, character.only = TRUE)
+
+# Get the natural earth data for U.S. states
+california_sf <- ne_states(country = "united states of america", returnclass = "sf") %>% 
+  filter(us_states$name == "California") %>% st_as_sf()
+```
+
+
+I confirm the correct geometry of the shape file and write to the computer, encoding with "UTF-8", as in the original file. 
+```{r}
+#Use base R to view state outline
+plot(california_sf$geometry)
+
+#Save shapefile
+st_write(california_sf, "california_sf.shp", driver = "ESRI Shapefile", encoding ="UTF-8")
+```
+
+
+I read back and plot the saved shape file to confirm correct writing to the drive.
+```{r}
+#Check file saved correctly by reading in shape file and plotting geometry
+test_shp<-st_read("california_sf.shp")
+plot(test_shp$geometry)
+```
+
+
+Finally, I plot on coordinates with ggplot2 to confirm the correct geographic position and begin building a graph for later visualisation.
+```{r}
+#Generate graph on coordinates to confirm position
+ggplot(data = california_sf) +
+  geom_sf() +
+  ggtitle("California, USA") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  #xlab("") + ylab("") +
+  geom_sf(color = "black", fill = "grey") 
+```
+
+_**Step 2: Data Acquisition**_
+
+*Download data for your region for:
+● Monthly evapotranspiration, temperature, and precipitation covering the
+years 2000 to 2022 from (ERA5-Land):
+https://cds.climate.copernicus.eu/#!/home
+● Land cover classification maps for the year 2020 from Land Cover Classes
+(Gridded Map):: https://cds.climate.copernicus.eu/#!/home
+● Soil organic carbon (SOC) stock data: https://soilgrids.org/
+If there are any questions about what exact variables should be used, use your
+own judgment to make a choice.*
+
+Comments on CDS functionality and data requests: https://cran.r-project.org/web/packages/ecmwfr/vignettes/cds_vignette.html
+
+
+I will download this data using the package 'ecmwfr'
+```{r}
+lapply(c("ecmwfr","keyring"), library, character.only = TRUE)
+
+ecmwfr::wf_set_key(user = "269199", key = "a107d4dc-ed19-46dc-ad85-390e61b50920", service = "cds")
+
+
+
+```
+
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
