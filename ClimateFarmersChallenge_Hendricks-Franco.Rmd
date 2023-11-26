@@ -1,6 +1,8 @@
 ---
 title: "Lindsey's Climate Farmers Challenge"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
 The work involves the use and analysis of gridded data (usually remote sensing or
@@ -10,7 +12,7 @@ and visualize relationships between these over a chosen region.
 Load required packages
 ```{r}
 # List of packages to load
-packages_today <- c("tidyverse","ecmwfr","ggspatial","rgdal")
+packages_today <- c("tidyverse","ecmwfr","ggspatial","sf")
 
 # Load the packages
 lapply(packages_today, library, character.only = TRUE)
@@ -39,7 +41,7 @@ lapply(c("sf","rnaturalearth"), library, character.only = TRUE)
 
 # Get the natural earth data for U.S. states
 california_sf <- ne_states(country = "united states of america", returnclass = "sf") %>% 
-  filter(us_states$name == "California") %>% st_as_sf()
+  filter(name == "California") %>% st_as_sf()
 ```
 
 
@@ -49,15 +51,15 @@ I confirm the correct geometry of the shape file and write to the computer, enco
 plot(california_sf$geometry)
 
 #Save shapefile
-st_write(california_sf, "california_sf.shp", driver = "ESRI Shapefile", encoding ="UTF-8")
+#st_write(california_sf, "california_sf.shp", driver = "ESRI Shapefile", encoding ="UTF-8")
 ```
 
 
 I read back and plot the saved shape file to confirm correct writing to the drive.
 ```{r}
 #Check file saved correctly by reading in shape file and plotting geometry
-test_shp<-st_read("california_sf.shp")
-plot(test_shp$geometry)
+#test_shp<-st_read("california_sf.shp")
+#plot(test_shp$geometry)
 ```
 
 
@@ -87,17 +89,181 @@ own judgment to make a choice.*
 Comments on CDS functionality and data requests: https://cran.r-project.org/web/packages/ecmwfr/vignettes/cds_vignette.html
 
 
-I will download this data using the package 'ecmwfr'
+Ideally, I would have downloaded this data using the package 'ecmwfr'. First adding the keychain. Instead, for simplicity in completing the activity, I downloaded the data directly from the website using the built-in data navigator 
 ```{r}
-lapply(c("ecmwfr","keyring"), library, character.only = TRUE)
+lapply(c("ecmwfr","keyring","ggmap"), library, character.only = TRUE)
 
 ecmwfr::wf_set_key(user = "269199", key = "a107d4dc-ed19-46dc-ad85-390e61b50920", service = "cds")
 
+
+```
+
+Data Acquisition
+
+● Monthly evapotranspiration, temperature, and precipitation covering the
+years 2000 to 2022 from (ERA5-Land):
+https://cds.climate.copernicus.eu/#!/home
+
+
+Examine file with the raster package:
+
+I chose to download total evaporation, soil temperature layer 1, and total precipitation at 12:00. Midday measurements will capture the transpiration component of evapotranspiration. During the default 0:00 measurements, the stomata of C3 plants are closed; thus no transpiration takes places. 
+
+Comments on use of midday measurements:
+https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8739081/
+
+Shallow soils (layer 1) contain the organic horizon and are most dynamic in response to ambient temperature and precipitation.
+
+I wrote a function to extract the data by climate variables, defining a brick for each one in the global environment. The new named brick files should be: stl1_brick, e_brick, tp_brick
+
+
+```{r}
+lapply(c("raster","ncdf4"), library, character.only = TRUE)
+
+#read .nc file and convert to a brick - specify a variable
+#varname: stl1, e, tp
+
+nc_file_path <- "temp_evap_prec.nc"
+variable_name <- "stl1"
+
+read_var <- function(nc_file_path, variable_name) {
+
+    var_name <- deparse(substitute(variable_name)) #unevaluated argument name, converted to character 
+    
+    clean_var_name <- gsub("\"", "", var_name) #remove double quotations
+    
+  # Read the NetCDF file for the specified variable
+ #Use the cleaned variable name in the assign function
+    assign(paste0(clean_var_name, "_brick"), brick(nc_file_path, varname = variable_name), envir = .GlobalEnv)
+
+  #crop to CA and plot
+  var_cropped <- crop(get(paste0(clean_var_name, "_brick")), extent(california_sf))
+  var_masked <- mask(var_cropped, california_sf)
+  plot(var_masked, main = paste0(clean_var_name, "_brick"))
+}
+
+read_var("temp_evap_prec.nc","stl1")
+read_var("temp_evap_prec.nc","e")
+read_var("temp_evap_prec.nc","tp")
+
+```
+
+
+● Land cover classification maps for the year 2020 from Land Cover Classes
+(Gridded Map):: https://cds.climate.copernicus.eu/#!/home
+
+Look at land
+cover classes from 2020
+
+```{r}
+landcover <- raster("landcover.nc")
+#crop to CA and plot
+var_cropped <- crop(landcover, extent(california_sf))
+cal_cover <- mask(var_cropped, california_sf)
+plot(cal_cover)
+
+summary(cal_cover)  
+
+```
+Interpret the land cover data. IPCC Classes on page 15:
+
+https://datastore.copernicus-climate.eu/documents/satellite-land-cover/D5.3.1_PUGS_ICDR_LC_v2.1.x_PRODUCTS_v1.1.pdf
+
+The most common classes are:
+
+10 - Rainfed cropland
+60 - Forest, Tree cover, broadleaved, deciduous, closed to open (> 15%)
+110 - Grassland, Mosaic herbaceous cover (>50%) / tree and shrub (<50%)
+120 - Shrubland
+
+```{r}
+library(sp)  #Load package for managing spatial data
+unique(cal_cover$Land.cover.class.defined.in.LCCS)
+hist(cal_cover$Land.cover.class.defined.in.LCCS)
+
+```
+
+For now, I am leaving out the soil carbon data due to time constraints. I may be able to return later to this task.
+
+
+Step 3: Data Integration
+Reproject the different rasters to match the one with lowest resolution, thus allowing joint analysis.
+
+Land cover resolution: [1] 0.002777778 0.002777778 (degrees, longlat)
+
+ERA5 climate data resolutions: [1] 0.1 0.1 (degrees, longlat)
+```{r}
+#Confirm resolution of each data set
+
+res(cal_cover)
+proj4string(cal_cover)
+
+res(stl1_brick)
+proj4string(stl1_brick)
 
 
 ```
 
 
+
+Now we will reproject the landcover data to the lower resolution of the ERA5 climate data. The 'resample' function from the 'raster' package estimates a new value for the lower resolution data, based on a defined method. I chose 'mode', which is suitable for relatively preserving the categorial data of landcover classes.
+
+```{r}
+# Resample the higher resolution raster to the resolution of the lower resolution raster
+cal_cover_res <- resample(cal_cover, stl1_brick, method = "ngb")
+res(cal_cover_res)
+plot(cal_cover_res)
+unique(cal_cover_res)
+
+```
+
+
+Graph the high- and low-resolution histograms of land cover classes to check distribution in both projections. Note that a few rare land cover classes were lost in resampling, but the main categories are retained:
+
+10 - Rainfed cropland
+60 - Forest, Tree cover, broadleaved, deciduous, closed to open (> 15%)
+110 - Grassland, Mosaic herbaceous cover (>50%) / tree and shrub (<50%)
+120 - Shrubland
+
+Unique values of land cover class are:
+ [1]  10  11  30  40  70  80  90 110 120 130 160 180 190 200 210
+
+```{r}
+
+par(mfrow=c(1,2))
+hist(cal_cover$Land.cover.class.defined.in.LCCS)
+hist(cal_cover_res$Land.cover.class.defined.in.LCCS)
+par(mfrow=c(1,1))
+```
+
+
+Step 4: Analysis and Visualization
+Visualize the time series of climate and soil variables in the format of your choice,
+aggregated separately for different land cover classes.
+
+```{r}
+
+head(cal_cover_res)
+head(stl1_brick)
+
+
+# Convert the brick to a data frame
+
+stl1_df <- rasterToPoints(stl1_brick) %>% as.data.frame()
+cover_df <- rasterToPoints(cal_cover_res) %>% as.data.frame()
+
+full <- full_join(cover_df, stl1_df, by = c("x","y"))
+
+
+# Plot the time series using ggplot2
+ggplot(df_long, aes(x = Date, y = Soil_Temperature)) +
+  geom_line() +
+  ggtitle("Soil Temperature Time Series in California") +
+  xlab("Date") +
+  ylab("Soil Temperature") +
+  theme_minimal()
+
+```
 
 Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
 
