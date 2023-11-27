@@ -3,6 +3,8 @@ title: "Lindsey's Climate Farmers Challenge"
 output:
   html_document:
     df_print: paged
+  pdf_document: default
+  word_document: default
 ---
 
 The work involves the use and analysis of gridded data (usually remote sensing or
@@ -12,12 +14,12 @@ and visualize relationships between these over a chosen region.
 Load required packages
 ```{r}
 # List of packages to load
-packages_today <- c("tidyverse","ecmwfr","ggspatial","sf")
+packages_today <- c("tidyverse","ecmwfr","ggspatial","sf","rnaturalearth")
 
 # Load the packages
 lapply(packages_today, library, character.only = TRUE)
 
-setwd("C:/Users/linds/Dropbox/Documents (Selective Sync Conflict)/Job Applications/Climate Farmers/CF-Challenge")
+setwd("C:/Users/linds/Documents/Climate Farmers Challenge - Code/CF-Challenge")
 
 ```
 
@@ -33,11 +35,8 @@ geospatial file (e.g. shape file or geojson). Use this region to filter download
 in the next steps.*
 
 
-First, I load the required packages for this step (sf and rnaturalearth) to access shape files of country and regional boundaries. I will work with the state of California, USA.
+First, I use the packages sf and rnaturalearth to access shape files of country and regional boundaries. I will work with the state of California, USA.
 ```{r}
-# Load the packages
-
-lapply(c("sf","rnaturalearth"), library, character.only = TRUE)
 
 # Get the natural earth data for U.S. states
 california_sf <- ne_states(country = "united states of america", returnclass = "sf") %>% 
@@ -91,7 +90,7 @@ Comments on CDS functionality and data requests: https://cran.r-project.org/web/
 
 Ideally, I would have downloaded this data using the package 'ecmwfr'. First adding the keychain. Instead, for simplicity in completing the activity, I downloaded the data directly from the website using the built-in data navigator 
 ```{r}
-lapply(c("ecmwfr","keyring","ggmap"), library, character.only = TRUE)
+lapply(c("ecmwfr","keyring"), library, character.only = TRUE)
 
 ecmwfr::wf_set_key(user = "269199", key = "a107d4dc-ed19-46dc-ad85-390e61b50920", service = "cds")
 
@@ -149,11 +148,10 @@ read_var("temp_evap_prec.nc","tp")
 ```
 
 
-● Land cover classification maps for the year 2020 from Land Cover Classes
-(Gridded Map):: https://cds.climate.copernicus.eu/#!/home
+*● Land cover classification maps for the year 2020 from Land Cover Classes
+(Gridded Map):: https://cds.climate.copernicus.eu/#!/home*
 
-Look at land
-cover classes from 2020
+Look at land cover classes from 2020
 
 ```{r}
 landcover <- raster("landcover.nc")
@@ -161,8 +159,6 @@ landcover <- raster("landcover.nc")
 var_cropped <- crop(landcover, extent(california_sf))
 cal_cover <- mask(var_cropped, california_sf)
 plot(cal_cover)
-
-summary(cal_cover)  
 
 ```
 Interpret the land cover data. IPCC Classes on page 15:
@@ -186,12 +182,13 @@ hist(cal_cover$Land.cover.class.defined.in.LCCS)
 For now, I am leaving out the soil carbon data due to time constraints. I may be able to return later to this task.
 
 
-Step 3: Data Integration
-Reproject the different rasters to match the one with lowest resolution, thus allowing joint analysis.
+_**Step 3: Data Integration**_
+*Reproject the different rasters to match the one with lowest resolution, thus allowing joint analysis.*
 
-Land cover resolution: [1] 0.002777778 0.002777778 (degrees, longlat)
+From this step forward, I will only work with the soil data brick 'stl1_brick' (shallow soil temperature). This allows me to show an example of the basic spatial data processing steps I could use here. Once this process is optimised, I would write a function to carry out the same steps on the other bricks. I could also combine the bricks into a stack and loop a function over the bricks in the stack. 
 
-ERA5 climate data resolutions: [1] 0.1 0.1 (degrees, longlat)
+I used the raster package to check the resolution of the land cover raster and the soil temperature brick.
+
 ```{r}
 #Confirm resolution of each data set
 
@@ -206,7 +203,7 @@ proj4string(stl1_brick)
 
 
 
-Now we will reproject the landcover data to the lower resolution of the ERA5 climate data. The 'resample' function from the 'raster' package estimates a new value for the lower resolution data, based on a defined method. I chose 'mode', which is suitable for relatively preserving the categorial data of landcover classes.
+Now I will reproject the land cover data to the lower resolution of the ERA5 climate data. The 'resample' function from the 'raster' package estimates a new value for the lower resolution data, based on a defined method. I chose 'nearest neighbor', which is suitable for preserving the categorical data of land cover classes.
 
 ```{r}
 # Resample the higher resolution raster to the resolution of the lower resolution raster
@@ -237,14 +234,16 @@ par(mfrow=c(1,1))
 ```
 
 
-Step 4: Analysis and Visualization
-Visualize the time series of climate and soil variables in the format of your choice,
-aggregated separately for different land cover classes.
+_**Step 4: Analysis and Visualization**_
+*Visualize the time series of climate and soil variables in the format of your choice,
+aggregated separately for different land cover classes.*
+
+Due to time constraints, I am only providing a basic time series visualisation of the soil temperature data, aggregated by land cover class. As mentioned above, this could be further written as a function to efficiently analyses other bricks in the same fasion or to loop across the bricks in a stack. 
 
 ```{r}
 
-head(cal_cover_res)
-head(stl1_brick)
+#head(cal_cover_res)
+#head(stl1_brick)
 
 
 # Convert the brick to a data frame
@@ -252,21 +251,85 @@ head(stl1_brick)
 stl1_df <- rasterToPoints(stl1_brick) %>% as.data.frame()
 cover_df <- rasterToPoints(cal_cover_res) %>% as.data.frame()
 
-full <- full_join(cover_df, stl1_df, by = c("x","y"))
+#Join the data frames bases on x,y coordinates (lat,lon) so that the land cover and soil temperature data coorespond spatially.
+
+full_df <- full_join(cover_df, stl1_df, by = c("x","y")) %>% na.omit() %>% 
+  rename(cover_class = "Land.cover.class.defined.in.LCCS") %>%
+  mutate(cover_class = as.factor(cover_class))
+
+stl1_summ <- full_df[3:39.] %>%
+  gather(2:37,key="date",value="value") %>%
+  mutate(cover_class = recode(cover_class,
+                              "10" = "10 - Rainfed Cropland",
+                              "11" = "10 - Rainfed Cropland",
+                              "30" = "30 - Mosaic Cropland",
+                              "40" = "40 - Mosaic Natural Vegetation",
+                              "70" = "70 - Tree cover, needleleaved, evergreen",
+                              "80" = "80 - Tree cover, needleleaved, deciduous",
+                              "90" = "90 - Tree cover, mixed leaf type",
+                              "110" = "110 - Mosaic herbaceous cover",
+                              "120" = "120 - Shrubland", "130" = "130 - Grassland",
+                              "160" = "160 - Tree cover, flooded",
+                              "180" = "180 - Shrub/herbaceous cover, flooded",
+                              "190" = "190 - Urban Areas", "200" = "200 - Bare Areas", "210" = "210 - Water Bodies")) %>%
+  mutate(date = substr(as.character(date), start = 2, stop = nchar(as.character(date)) - 12)) %>%
+  mutate(date = as.factor(date)) %>%
+  group_by(cover_class, date) %>% 
+  summarise(mn.val = mean(value), se = sd(value)/sqrt(length(value))) %>% 
+  as.data.frame()
+
+head(stl1_summ)
 
 
 # Plot the time series using ggplot2
-ggplot(df_long, aes(x = Date, y = Soil_Temperature)) +
-  geom_line() +
-  ggtitle("Soil Temperature Time Series in California") +
-  xlab("Date") +
-  ylab("Soil Temperature") +
-  theme_minimal()
+stl1_plot <- ggplot(data=stl1_summ, aes(x=date, y=mn.val, group = cover_class)) + 
+  geom_line(aes(color=cover_class), linewidth=.3, position = position_dodge(width=0)) +
+  #geom_errorbar(aes(ymin=mn.val-se,ymax=mn.val+se, color = cover_class), size=.3, width=.3, position = position_dodge(width=0)) +
+  ylab(expression("Soil Temperature (K)")) +
+  xlab("Date") + theme_bw() +
+  ggtitle("California Shallow Soil Temperature by Land Cover Class") +
+  theme(axis.text.x = element_text(angle = 70, vjust = 1, hjust = 1, size = 7))
+
+stl1_plot
+```
+
+
+_**Step 5: Sampling Design**_
+*Imagine you wanted to detect changes in SOC in the region in response to farm
+management practices or some other factor. so you need a sampling plan. Based
+on the SOC data you obtained, determine the number of samples that would
+need to be taken in the region in order to have a 95% confidence interval equal or
+less than 10% of the mean value. Assume a Gaussian distribution.*
+
+Due to time constraints, I did not calculate this minimum required sample size from the SOC data. This would be possible to calculate from the formula for sample size, assuming a Gaussian (normal) distribution. According the the central limit theorem, the mean distribution of a sample will tend toward normality, as long as the sample size is high enough; therefore, the assumption of a Gaussian distribution is appropriate for large spatial data sets.
+
+sample size = (Z^2 x sd^2)/(E^2)
+
+Z = The Z-score for the 95% confidence interval
+sd = Estimated standard deviation, derived from the sample
+E = The desired margin of error
+
+
+Alternatively, I will calculate the required samples size required for the same error parameters, but for data from soil temperature (stl1_brick) at a given time (May 2022).
+
+```{r}
+# Given error parameters
+conf_int <- 0.95  # 95% confidence interval
+Z <- qnorm((1 + conf_int) / 2)  # Z-score for the given confidence level
+margin_of_error <- 0.10  # Desired margin of error - 10% of the mean
+
+# Estimate standard deviation
+est_sd <- sd(as.vector(stl1_brick$X2022.05.01.12.00.00), na.rm = TRUE)
+
+# Calculate required sample size
+sample_size <- (Z^2 * est_sd^2) / (margin_of_error^2)
+
+# Round up to the nearest integer
+sample_size <- ceiling(sample_size)
+
+# Print the result
+print(sample_size)
 
 ```
 
-Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
 
-When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
-
-The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
